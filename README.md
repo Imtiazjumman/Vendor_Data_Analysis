@@ -52,7 +52,7 @@ Build a governed data pipeline and dashboard that lets stakeholders (Purchasing,
 - [x] **Phase 0** — Business problem, stakeholders, KPI definitions
 - [x] **Phase 1** — Load all 6 source files into SQL Server, verify row counts/types/nulls, index join keys
 - [x] **Phase 2** — Build `vw_VendorSummary` (SQL view): joins purchases, sales, freight, and inventory to Vendor × Brand grain; verified clean (no join-key mismatches; NULLs confirmed as genuine "no activity" cases, not data errors)
-- [ ] **Phase 3** — Python (Jupyter/VS Code): pull `vw_VendorSummary` into pandas, clean, engineer KPI columns
+- [x] **Phase 3** — Python (Jupyter/VS Code): connected to SQL Server, pulled `vw_VendorSummary`, cleaned nulls/whitespace, engineered KPIs (GrossProfit, ProfitMargin%, StockTurnover, SalesToPurchaseRatio, FreightCostPct), fixed freight-grain bug, added materiality flags for outlier protection, saved final table as `VendorSummaryFinal` in SQL Server + local CSV backup
 - [ ] **Phase 4** — Python: EDA + hypothesis testing (e.g. margin difference between top vs. bottom vendors)
 - [ ] **Phase 5** — Power BI dashboard with DAX measures
 - [ ] **Phase 6** — Insights & recommendations write-up
