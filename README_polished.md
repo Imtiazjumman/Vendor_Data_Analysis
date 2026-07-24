@@ -121,8 +121,8 @@ Final cleaned + enriched table saved back to SQL Server as `VendorSummaryFinal`,
 - [x] **Phase 2** — Built `vw_VendorSummary`; verified clean (no join-key mismatches, NULLs confirmed genuine)
 - [x] **Phase 3** — Connected Python to SQL Server; cleaned data; engineered KPIs; fixed freight-grain bug; added materiality flags; saved `VendorSummaryFinal`
 - [x] **Phase 4** — EDA + hypothesis testing; fixed margin-averaging bug; tested vendor-size-vs-margin hypothesis (not significant); flagged 7 problem vendors; freight/margin correlation checked
-- [ ] **Phase 5** — Power BI dashboard with DAX measures
-- [ ] **Phase 6** — Final insights & recommendations write-up
+- [x] **Phase 5** — Power BI dashboard with DAX measures
+- [x] **Phase 6** — Final insights & recommendations write-up
 
 ---
 *Work in progress — updated phase by phase.*
