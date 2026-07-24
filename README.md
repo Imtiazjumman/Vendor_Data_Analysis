@@ -11,9 +11,12 @@
 - [Tech Stack](#️-tech-stack)
 - [Dataset](#-dataset)
 - [Methodology](#-methodology)
+- [Dashboard](#-dashboard)
 - [Key Findings](#-key-findings)
+- [Recommendations](#-recommendations)
 - [Repo Structure](#-repo-structure)
 - [Project Roadmap](#-project-roadmap)
+- [Limitations & Next Steps](#-limitations--next-steps)
 
 ---
 
@@ -30,7 +33,7 @@ This project builds a data-backed view of vendor performance to answer:
 
 ## 🎯 Objective
 
-Build a governed data pipeline and analysis that lets stakeholders evaluate vendor performance on demand — grounded in verified data, statistically validated findings, and a dashboard for ongoing monitoring — culminating in concrete, defensible recommendations.
+Build a governed data pipeline and analysis that lets stakeholders evaluate vendor performance on demand — grounded in verified data, statistically validated findings, and a live dashboard for ongoing monitoring — culminating in concrete, defensible recommendations.
 
 ## 👥 Stakeholders
 
@@ -47,7 +50,7 @@ Build a governed data pipeline and analysis that lets stakeholders evaluate vend
 |---|---|---|
 | Data storage & ETL | **Microsoft SQL Server** (T-SQL) | Load, index, and join large source tables; single source of truth |
 | Analysis & validation | **Python** (Jupyter Notebook in VS Code) | Clean data, engineer KPIs, run statistical tests, EDA |
-| Visualization | **Power BI + DAX** | Interactive stakeholder dashboard *(upcoming — Phase 5)* |
+| Visualization | **Power BI + DAX** | Interactive single-page stakeholder dashboard |
 
 **Why SQL for the heavy joins instead of just DAX?** With 12.8M+ sales rows and 2.3M+ purchase rows, doing the joins/aggregation in Power BI/DAX at report-load time would mean pulling raw row-level data into memory — slow refreshes, bloated file size. SQL Server's indexed, disk-based engine does that work once, upstream, and hands Power BI a small, pre-aggregated table. DAX is reserved for what it's actually best at: interactive, filter-reactive report-time calculations.
 
@@ -67,51 +70,76 @@ Build a governed data pipeline and analysis that lets stakeholders evaluate vend
 ## 🔬 Methodology
 
 ### Phase 1 — Data Loading (SQL Server)
-All 6 source files loaded into SQL Server via `BULK INSERT` with explicit, join-friendly data types (`INT` for `Brand`/`VendorNumber` consistently across every table — critical for reliable joins). Verified row counts against source files, checked for NULLs on key columns, and indexed all join keys (`Brand`, `VendorNumber`, `Store`).
+All 6 source files loaded into SQL Server via `BULK INSERT` with explicit, join-friendly data types (`INT` for `Brand`/`VendorNumber` consistently across every table). Verified row counts against source files, checked NULLs on key columns, and indexed all join keys.
 
 ### Phase 2 — Vendor Summary View (SQL Server)
-Built `vw_VendorSummary`: a single view joining all 6 tables to **Vendor × Brand** grain, using CTEs for each source aggregation (purchases, sales, freight, beginning/ending inventory), joined via `purchase_prices` as the base table so every brand in the price list is preserved even with no matching activity.
-
-**Verification caught a real edge case:** ~13% of rows showed NULL purchase activity. Spot-checked whether this was a join-key mismatch (e.g. vendor reassignment) vs. genuine "never purchased" — confirmed it was genuine, not a data bug, before proceeding.
+Built `vw_VendorSummary`: joins all 6 tables to **Vendor × Brand** grain via CTEs (purchases, sales, freight, beginning/ending inventory), based off `purchase_prices` so every brand is preserved even with no matching activity. Verified ~13% NULL purchase-activity rows were genuine "never purchased" cases, not join-key mismatches, via a targeted spot-check before proceeding.
 
 ### Phase 3 — Data Cleaning & KPI Engineering (Python)
-Connected Jupyter (VS Code) to SQL Server via SQLAlchemy/pyodbc, pulled `vw_VendorSummary` (12,261 rows verified), and:
-- Trimmed whitespace on text fields, filled NULLs in activity columns with `0` (absence = zero activity, not missing data)
-- Engineered KPIs: **Gross Profit**, **Profit Margin %**, **Stock Turnover**, **Sales-to-Purchase Ratio**, **Freight Cost %**
+Connected Jupyter (VS Code) to SQL Server via SQLAlchemy/pyodbc, pulled `vw_VendorSummary` (12,261 rows verified), cleaned nulls/whitespace, and engineered: **Gross Profit, Profit Margin %, Stock Turnover, Sales-to-Purchase Ratio, Freight Cost %**.
 
-**Caught and fixed a grain-mismatch bug:** initial Freight Cost % divided vendor-level total freight by brand-level purchase dollars, producing nonsensical values (up to 17,000,000%). Recomputed freight % correctly at vendor grain.
-
-**Added materiality flags** (`LowSalesVolumeFlag`, `LowInventoryBaseFlag`) rather than dropping outlier rows — near-zero denominators (e.g. a brand with 0.5 units average inventory) blow up ratio metrics without representing real signal, but the underlying rows still matter for aggregate/total reporting.
-
-Final cleaned + enriched table saved back to SQL Server as `VendorSummaryFinal`, plus a local CSV backup.
+**Caught and fixed a grain-mismatch bug:** initial Freight Cost % divided vendor-level total freight by brand-level purchase dollars, producing values as high as 17,000,000%. Recomputed correctly at vendor grain. Added materiality flags (`LowSalesVolumeFlag`, `LowInventoryBaseFlag`) instead of dropping outlier rows, to protect ratio-based rankings without losing aggregate-level data. Final table saved to SQL Server as `VendorSummaryFinal`.
 
 ### Phase 4 — EDA & Hypothesis Testing (Python)
-- **Distribution check:** brand-level profit margins cluster in a healthy 0–100% range (median ≈ 32%), with a long negative tail from low-activity brands.
-- **Caught a Simpson's Paradox-style bug:** naive vendor ranking (averaging brand-level %s) showed some top-10-by-profit vendors with *negative* average margin. Fixed by switching to **dollar-weighted margin** (ΣProfit / ΣSales) instead of averaging percentages — corrected rankings are now consistent and sensible.
-- **Hypothesis test:** "Do higher-sales-volume vendors have better profit margins?" Tested at the correct unit of analysis (vendor-level, n=67 vs n=61 — not brand-level, which would pseudo-replicate correlated brands under the same vendor). Ran both Welch's t-test (p=0.093) and Mann-Whitney U (p=0.101, outlier-robust) — **no statistically significant relationship found.**
-- **Freight vs. margin:** freight cost % varies narrowly across vendors (~0.46%–0.64%) and shows no meaningful correlation with margin.
+- Brand-level margins cluster in a healthy 0–100% range (median ≈ 32%).
+- **Caught a Simpson's Paradox-style bug:** naive averaging of brand-level margin percentages made some genuinely strong top-10 vendors (e.g. Martignetti Companies) look unprofitable. Fixed by switching to **dollar-weighted margin** (ΣProfit/ΣSales).
+- **Hypothesis test** ("do higher-volume vendors have better margins?"), run at the correct unit of analysis (vendor-level, n=67 vs n=61, not brand-level): Welch's t-test (p=0.093) and Mann-Whitney U (p=0.101) — **no statistically significant relationship.**
+- Freight cost % shows no meaningful correlation with margin across most vendors.
+
+### Phase 5 — Power BI Dashboard
+Built a single-page interactive dashboard (see [Dashboard](#-dashboard) below) combining KPI cards, ranking charts, a sales-vs-margin scatter plot, an efficiency combo chart, composition visuals, and a fully-flagged vendor detail table — with `VendorName` and `Classification` slicers for interactive filtering.
+
+### Phase 6 — Final Insights & Recommendations
+Consolidated all findings into a business-facing report (`docs/phase6_final_insights_and_recommendations.md`) with prioritized, owner-assigned recommendations.
+
+## 📈 Dashboard
+
+Single-page Power BI dashboard including:
+- **KPI cards:** Total Sales, Total Purchase, Total Gross Profit, Overall Margin %, Total Freight Cost, Vendor Count, Brand Count
+- **Top 10 / Bottom 10 vendors** by Gross Profit (clustered bar charts)
+- **Sales vs. Margin scatter plot** — visualizes vendor positioning at a glance
+- **Stock Turnover vs. Freight Cost % combo chart** — efficiency view
+- **Classification mix** (donut) and **Sales-by-vendor** (treemap) — composition views
+- **Full vendor ranking table** with color-scaled margin and a conditional-formatted "Flagged Vendor" column highlighting the 7 vendors requiring review
+- **Slicers** for `VendorName` and `Classification` to filter the whole page interactively
 
 ## 💡 Key Findings
 
-1. **Vendor size does not predict profitability.** Larger vendors are not inherently better margin partners — purchasing decisions should be driven by each vendor's actual performance, not assumed scale advantages.
-2. **7 vendors show severe, isolated negative margins** (as low as -1,478%), unexplained by market segment or volume — these are individual cases warranting direct pricing renegotiation or relationship review: Truett Hurst, Highland Wine Merchants LLC, Ira Goldman and Williams LLP, Vineyard Brands LLC, Uncorked, Loyal Dog Winery, Black Cove Beverages.
-3. **Freight cost is not a meaningful margin driver** in this dataset — it varies too little across vendors to explain performance differences.
-4. Naive percentage-averaging **understates top-performing vendors** — Martignetti Companies, for example, looked unprofitable under simple averaging but is a genuinely strong (32% dollar-weighted margin) top-10 vendor once measured correctly.
+1. **Vendor size does not predict profitability.** Two independent statistical tests (t-test p=0.093, Mann-Whitney U p=0.101) found no significant margin difference between high- and low-volume vendors — purchasing decisions should be driven by actual vendor performance, not assumed scale advantages.
+2. **Top 5 vendors by profit** — Diageo North America, Martignetti Companies, Constellation Brands, Pernod Ricard USA, and Jim Beam Brands — generate ~$55.7M combined, roughly 43% of total gross profit.
+3. **7 vendors show severe, isolated negative margins** (as low as -1,478%), unexplained by market segment or volume: Truett Hurst, Highland Wine Merchants LLC, Ira Goldman and Williams LLP, Vineyard Brands LLC, Uncorked, Loyal Dog Winery, Black Cove Beverages.
+4. **Freight cost is not a meaningful margin driver** for most vendors (narrow 0.46%–0.64% range), except two outliers — Vineyard Brands LLC (55.43%) and Southern Glazers W&S of NE (46.60%) — flagged for direct investigation.
+5. Naive percentage-averaging **understates genuinely strong vendors** — always weight vendor margin by dollars (ΣProfit/ΣSales), not by averaging brand-level percentages.
+
+## ✅ Recommendations
+
+| Priority | Action | Owner |
+|---|---|---|
+| High | Individually review pricing/terms with the 7 flagged loss-making vendors | Purchasing |
+| High | Investigate freight anomaly at Vineyard Brands LLC and Southern Glazers W&S of NE | Purchasing / Logistics |
+| Medium | Maintain and prioritize relationships with top-5 profit vendors | Purchasing / Leadership |
+| Medium | Stop using vendor size/volume as a proxy for expected margin in negotiations | Purchasing / Leadership |
+| Ongoing | Use the Power BI dashboard for continuous vendor monitoring | Finance / Ops |
+
+Full detail in `docs/phase6_final_insights_and_recommendations.md`.
 
 ## 📁 Repo Structure
 
 ```
-├── README.md                          <- this file
+├── README.md                                      <- this file
 ├── docs/
-│   ├── PROJECT_README.md              <- detailed business problem & scope doc
-│   ├── sql_server_import_guide.md     <- how raw CSVs were loaded into SQL Server
-│   └── phase4_findings_summary.md     <- full EDA & hypothesis testing write-up
+│   ├── PROJECT_README.md                          <- detailed business problem & scope doc
+│   ├── sql_server_import_guide.md                 <- how raw CSVs were loaded into SQL Server
+│   ├── phase4_findings_summary.md                 <- full EDA & hypothesis testing write-up
+│   └── phase6_final_insights_and_recommendations.md <- final business report
 ├── sql/
-│   ├── verify_sql_server_import.sql   <- post-load verification checklist
-│   ├── vendor_summary_view_fixed.sql  <- vw_VendorSummary (Phase 2 core view)
-│   ├── check_nulls_by_column.sql      <- null audit query
-│   └── spot_check_null_purchase.sql   <- join-mismatch vs. genuine-null verification
-└── Vendor_Data_Analysis.ipynb         <- Phase 3 & 4: cleaning, KPI engineering, EDA, hypothesis testing
+│   ├── verify_sql_server_import.sql               <- post-load verification checklist
+│   ├── vendor_summary_view_fixed.sql              <- vw_VendorSummary (Phase 2 core view)
+│   ├── check_nulls_by_column.sql                  <- null audit query
+│   └── spot_check_null_purchase.sql               <- join-mismatch vs. genuine-null verification
+├── powerbi/
+│   └── Vendor_Data_Analysis_dashboard.pbix        <- Power BI dashboard (Phase 5)
+└── Vendor_Data_Analysis.ipynb                     <- Phase 3 & 4: cleaning, KPI engineering, EDA, hypothesis testing
 ```
 
 ## 🚧 Project Roadmap
@@ -121,8 +149,16 @@ Final cleaned + enriched table saved back to SQL Server as `VendorSummaryFinal`,
 - [x] **Phase 2** — Built `vw_VendorSummary`; verified clean (no join-key mismatches, NULLs confirmed genuine)
 - [x] **Phase 3** — Connected Python to SQL Server; cleaned data; engineered KPIs; fixed freight-grain bug; added materiality flags; saved `VendorSummaryFinal`
 - [x] **Phase 4** — EDA + hypothesis testing; fixed margin-averaging bug; tested vendor-size-vs-margin hypothesis (not significant); flagged 7 problem vendors; freight/margin correlation checked
-- [x] **Phase 5** — Power BI dashboard with DAX measures
-- [ ] **Phase 6** — Final insights & recommendations write-up
+- [x] **Phase 5** — Power BI dashboard built: single-page layout with KPI cards, ranking charts, scatter, combo chart, composition visuals, slicers, and flagged-vendor detail table
+- [x] **Phase 6** — Final insights & recommendations written up and consolidated into a business-facing report
+
+**Project complete — Phase 0 through Phase 6.**
+
+## ⚠️ Limitations & Next Steps
+
+- This analysis covers a single calendar year (2024); multi-year trend data would clarify whether flagged vendors' losses are one-time or recurring.
+- Freight is invoiced at the vendor level, not itemized per brand/shipment — more granular freight allocation could sharpen per-brand profitability further.
+- This project establishes that vendor *size* doesn't predict margin — a natural next question is what *does* (product category, region, contract terms), which would need additional data not currently captured here.
 
 ---
-*Work in progress — updated phase by phase.*
+*A complete end-to-end analytics project — from business problem to statistically validated, dashboard-backed recommendations.*
